@@ -12,7 +12,7 @@
       :source-position="sourcePosition"
       :target-position="targetPosition"
       :marker-end="markerEnd"
-      :style="style"
+      :style="computedEdgeStyle"
     />
     
     <!-- 边的标签 -->
@@ -63,6 +63,8 @@ const props = defineProps({
   label: String,
   style: Object,
   markerEnd: String,
+  subgraphHighlighted: Boolean,
+  dimmed: Boolean,
 })
 
 const { findEdge, updateEdge } = useVueFlow()
@@ -101,6 +103,48 @@ const cancelEditing = () => {
   isEditing.value = false
   editValue.value = props.label || '关系'
 }
+
+// 计算边的动态样式
+const computedEdgeStyle = computed(() => {
+  const baseStyle = props.style || {}
+  
+  // 尝试从VueFlow获取边数据
+  const edge = findEdge(props.id)
+  
+  // 调试信息
+  console.log(`Edge ${props.id} - edge data:`, edge)
+  console.log(`Edge ${props.id} - subgraphHighlighted: ${edge?.subgraphHighlighted || edge?.data?.subgraphHighlighted}, dimmed: ${edge?.dimmed || edge?.data?.dimmed}`)
+  
+  // 检查多个可能的高亮状态位置
+  const isSubgraphHighlighted = edge?.subgraphHighlighted || edge?.data?.subgraphHighlighted || props.subgraphHighlighted
+  const isDimmed = edge?.dimmed || edge?.data?.dimmed || props.dimmed
+  
+  if (isSubgraphHighlighted) {
+    // 子图高亮样式 - 更明显的绿色高亮效果
+    console.log(`Edge ${props.id} applying subgraph highlight style`)
+    return {
+      ...baseStyle,
+      stroke: '#28a745',
+      strokeWidth: 4,
+      strokeDasharray: 'none',
+      opacity: 1,
+      filter: 'drop-shadow(0 0 6px rgba(40, 167, 69, 0.6))'
+    }
+  } else if (isDimmed) {
+    // 淡化样式
+    console.log(`Edge ${props.id} applying dimmed style`)
+    return {
+      ...baseStyle,
+      opacity: 0.3,
+      stroke: '#999',
+      strokeWidth: 1
+    }
+  }
+  
+  // 默认样式
+  console.log(`Edge ${props.id} using default style`)
+  return baseStyle
+})
 </script>
 
 <style scoped>

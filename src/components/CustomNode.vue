@@ -1,5 +1,9 @@
 <template>
-  <div class="custom-node" :class="{ highlighted: data.highlighted === true }">
+  <div class="custom-node" :class="{ 
+    highlighted: data.highlighted === true,
+    'subgraph-highlighted': data.subgraphHighlighted === true,
+    dimmed: data.dimmed === true
+  }">
     <!-- 四个连接桩 -->
     <Handle type="source" position="top" id="top" class="custom-handle" />
     <Handle
@@ -217,6 +221,22 @@ const cancelEditing = () => {
   background: linear-gradient(135deg, #f0f8ff 0%, #e8f4fd 100%);
 }
 
+/* 子图高亮效果 */
+.custom-node.subgraph-highlighted {
+  animation: subgraph-highlight-pulse 2s ease-in-out infinite;
+  border-color: #28a745;
+  box-shadow: 0 0 30px rgba(40, 167, 69, 0.7);
+  background: linear-gradient(135deg, #f8fff9 0%, #e8f5e8 100%);
+  z-index: 10;
+}
+
+/* 淡化效果 */
+.custom-node.dimmed {
+  opacity: 0.3;
+  filter: grayscale(0.5);
+  transition: all 0.3s ease;
+}
+
 @keyframes blue-highlight-pulse {
   0%,
   100% {
@@ -228,6 +248,20 @@ const cancelEditing = () => {
     transform: scale(1.03);
     box-shadow: 0 0 35px rgba(64, 104, 212, 0.8);
     border-color: #3557c0;
+  }
+}
+
+@keyframes subgraph-highlight-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 30px rgba(40, 167, 69, 0.7);
+    border-color: #28a745;
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 40px rgba(40, 167, 69, 0.9);
+    border-color: #1e7e34;
   }
 }
 </style>
