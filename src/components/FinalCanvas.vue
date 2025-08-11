@@ -678,6 +678,12 @@ const clearAllHighlights = () => {
       // 边处理
       element.subgraphHighlighted = false;
       element.dimmed = false;
+
+      // 同时清除data中的属性
+      if (element.data) {
+        element.data.subgraphHighlighted = false;
+        element.data.dimmed = false;
+      }
     }
   });
 
@@ -690,6 +696,24 @@ const clearAllHighlights = () => {
   highlightState.subgraphHighlight.nodes = [];
   highlightState.subgraphHighlight.edges = [];
   highlightState.subgraphHighlight.centerNode = null;
+
+  // 强制触发响应式更新以确保边的高亮清除
+  const timestamp = Date.now();
+  elements.value.forEach((element) => {
+    if (element.source && element.target) {
+      // 为边添加强制更新标记
+      element._clearHighlightUpdate = timestamp;
+    }
+  });
+
+  // 立即移除临时属性
+  nextTick(() => {
+    elements.value.forEach((element) => {
+      if (element.source && element.target && element._clearHighlightUpdate) {
+        delete element._clearHighlightUpdate;
+      }
+    });
+  });
 };
 
 // 重置搜索状态
