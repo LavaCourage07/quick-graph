@@ -142,7 +142,802 @@ const SMART_EDIT_PROMPT = `你是一名图纸编辑专家。请根据用户的�
 
 请确保返回的是有效的JSON格式，不要包含任何其他文字。`
 
+// 本体优化提示词
+const ENTITY_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专门负责优化节点（实体）的信息。
+
+当前节点信息：
+{nodeInfo}
+
+用户优化需求：{userInput}
+
+请根据用户的需求，对这个节点进行智能优化。优化内容可能包括：
+1. 完善节点的中文名称，使其更准确、专业
+2. 补充或修正英文名称
+3. 丰富节点的描述信息
+4. 添加或完善技术参数
+5. 补充功能特征信息
+6. 修正或优化其他属性
+
+**优化原则**：
+- 保持工业领域的专业性和准确性
+- 优化后的信息应该更加详细和完整
+- 英文名称应符合国际标准术语
+- 描述应该简洁明了，突出关键特征
+- 参数和特征应该具有实际意义
+
+请返回优化后的节点数据，格式如下：
+{
+  "success": true,
+  "message": "优化说明",
+  "optimizedNode": {
+    "id": "节点ID（保持不变）",
+    "label": "优化后的中文名称",
+    "englishName": "优化后的英文名称",
+    "description": "优化后的详细描述",
+    "parameters": ["参数1", "参数2", "..."],
+    "features": ["特征1", "特征2", "..."],
+    "type": "节点类型",
+    "category": "节点分类"
+  },
+  "changes": [
+    {
+      "field": "修改的字段名",
+      "oldValue": "原始值",
+      "newValue": "新值",
+      "reason": "修改原因"
+    }
+  ]
+}
+
+请确保返回的是有效的JSON格式，不要包含任何其他文字。`
+
+// 关系优化提示词
+const RELATION_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专门负责优化边（关系）的信息。
+
+当前关系信息：
+{relationInfo}
+
+连接的节点信息：
+源节点：{sourceNode}
+目标节点：{targetNode}
+
+用户优化需求：{userInput}
+
+请根据用户的需求，对这个关系进行智能优化。优化内容可能包括：
+1. 完善关系的中文名称，使其更准确地表达两个节点之间的联系
+2. 补充或修正英文名称
+3. 丰富关系的描述信息
+4. 添加或完善关系参数（如流量、压力、温度等）
+5. 补充关系特征信息
+6. 修正关系的方向性或类型
+
+**优化原则**：
+- 关系名称应该准确反映两个节点之间的实际联系
+- 保持工业领域的专业性和准确性
+- 英文名称应符合国际标准术语
+- 描述应该明确说明关系的性质和作用
+- 参数应该与关系类型相匹配
+
+请返回优化后的关系数据，格式如下：
+{
+  "success": true,
+  "message": "优化说明",
+  "optimizedRelation": {
+    "id": "关系ID（保持不变）",
+    "label": "优化后的中文名称",
+    "englishName": "优化后的英文名称",
+    "description": "优化后的详细描述",
+    "parameters": ["参数1", "参数2", "..."],
+    "features": ["特征1", "特征2", "..."],
+    "type": "关系类型",
+    "direction": "关系方向（directed/undirected）",
+    "category": "关系分类"
+  },
+  "changes": [
+    {
+      "field": "修改的字段名",
+      "oldValue": "原始值",
+      "newValue": "新值",
+      "reason": "修改原因"
+    }
+  ]
+}
+
+请确保返回的是有效的JSON格式，不要包含任何其他文字。`
+
+// 请求缓存
+const requestCache = new Map()
+const CACHE_DURATION = 5 * 60 * 1000 // 5分钟缓存
+
+// 错误处理和重试机制
+const withRetry = async (fn, maxRetries = 3, delay = 1000) => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (error) {
+      console.warn(`请求失败，第 ${i + 1} 次重试:`, error.message)
+      
+      if (i === maxRetries - 1) {
+        throw error
+      }
+      
+      // 指数退避延迟
+      await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)))
+    }
+  }
+}
+
+// 生成缓存键
+const generateCacheKey = (method, params) => {
+  return `${method}_${JSON.stringify(params)}`
+}
+
+// 检查缓存
+const getFromCache = (key) => {
+  const cached = requestCache.get(key)
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    console.log('使用缓存结果:', key)
+    return cached.data
+  }
+  return null
+}
+
+// 设置缓存
+const setCache = (key, data) => {
+  requestCache.set(key, {
+    data,
+    timestamp: Date.now()
+  })
+  
+  // 清理过期缓存
+  if (requestCache.size > 100) {
+    const now = Date.now()
+    for (const [k, v] of requestCache.entries()) {
+      if (now - v.timestamp > CACHE_DURATION) {
+        requestCache.delete(k)
+      }
+    }
+  }
+}
+
+// 验证AI响应格式
+const validateResponse = (response, expectedFields = []) => {
+  if (!response || typeof response !== 'object') {
+    throw new Error('AI响应格式无效')
+  }
+  
+  for (const field of expectedFields) {
+    if (!(field in response)) {
+      console.warn(`AI响应缺少必需字段: ${field}`)
+    }
+  }
+  
+  return true
+}
+
+// 子图分析提示词
+const SUBGRAPH_ANALYSIS_PROMPT = `你是一名工业知识建模专家，专门负责对子图进行深度分析。
+
+当前子图信息：
+节点列表：{nodes}
+边列表：{edges}
+
+请对这个子图进行全面的深度分析，包括：
+
+1. **结构分析**：
+   - 图的拓扑结构特征
+   - 节点连通性分析
+   - 关键节点识别
+
+2. **信息完整性评估**：
+   - 节点信息完整程度
+   - 关系描述准确性
+   - 缺失信息识别
+
+3. **逻辑一致性检查**：
+   - 节点间关系的合理性
+   - 可能的逻辑错误
+   - 冗余或矛盾信息
+
+4. **优化机会识别**：
+   - 可以改进的节点
+   - 可以优化的关系
+   - 可能缺失的连接
+
+请返回详细的分析结果，格式如下：
+{
+  "success": true,
+  "analysisId": "分析ID",
+  "overallScore": 85,
+  "summary": "整体分析总结",
+  "structureAnalysis": {
+    "connectivity": "连通性评估",
+    "keyNodes": ["关键节点列表"],
+    "topology": "拓扑特征描述"
+  },
+  "completenessAssessment": {
+    "nodeCompleteness": 0.75,
+    "edgeCompleteness": 0.60,
+    "missingInfo": ["缺失信息列表"]
+  },
+  "logicalConsistency": {
+    "consistencyScore": 0.80,
+    "issues": [
+      {
+        "type": "逻辑问题类型",
+        "description": "问题描述",
+        "affectedElements": ["受影响的元素"]
+      }
+    ]
+  },
+  "optimizationOpportunities": {
+    "nodeOptimizations": [
+      {
+        "nodeId": "节点ID",
+        "suggestions": ["优化建议列表"]
+      }
+    ],
+    "edgeOptimizations": [
+      {
+        "edgeId": "边ID",
+        "suggestions": ["优化建议列表"]
+      }
+    ],
+    "missingConnections": [
+      {
+        "source": "源节点",
+        "target": "目标节点",
+        "reason": "建议连接的原因"
+      }
+    ]
+  }
+}
+
+请确保返回的是有效的JSON格式，不要包含任何其他文字。`
+
+// 整体优化提示词
+const OVERALL_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专门负责对子图进行整体优化。
+
+当前子图信息：
+节点列表：{nodes}
+边列表：{edges}
+
+分析结果：{analysisResult}
+
+用户优化需求：{userInput}
+
+请基于分析结果和用户需求，对整个子图进行智能优化。优化内容包括：
+
+1. **节点优化**：
+   - 完善节点信息（名称、描述、参数等）
+   - 修正不准确的节点属性
+   - 统一节点命名规范
+
+2. **关系优化**：
+   - 完善关系描述和参数
+   - 修正不合理的关系
+   - 添加缺失的重要连接
+
+3. **结构优化**：
+   - 优化图的整体结构
+   - 改进信息组织方式
+   - 增强逻辑清晰度
+
+4. **专业性提升**：
+   - 使用标准的工业术语
+   - 添加英文对照
+   - 完善技术参数
+
+**优化原则**：
+- 保持原有结构的合理部分
+- 优先解决分析中发现的问题
+- 确保优化后的信息准确性
+- 提升整体的专业性和可读性
+
+请返回优化后的完整子图数据，格式如下：
+{
+  "success": true,
+  "optimizationId": "优化ID",
+  "message": "优化说明",
+  "optimizedSubgraph": {
+    "nodes": [优化后的节点数组],
+    "edges": [优化后的边数组]
+  },
+  "changes": {
+    "nodeChanges": [节点变更记录],
+    "edgeChanges": [边变更记录]
+  },
+  "statistics": {
+    "nodesOptimized": 5,
+    "edgesOptimized": 3,
+    "newConnections": 2,
+    "improvementScore": 0.25
+  }
+}
+
+请确保返回的是有效的JSON格式，不要包含任何其他文字。`
+
 export const kimiAPI = {
+  // 本体优化
+  async optimizeEntity(nodeInfo, userInput, subgraphContext = null) {
+    const cacheKey = generateCacheKey('optimizeEntity', { nodeId: nodeInfo.id, userInput })
+    
+    // 检查缓存
+    const cachedResult = getFromCache(cacheKey)
+    if (cachedResult) {
+      return cachedResult
+    }
+
+    return withRetry(async () => {
+      console.log('开始本体优化:', { nodeId: nodeInfo.id, userInput })
+
+      // 准备节点信息
+      const nodeData = {
+        id: nodeInfo.id,
+        label: nodeInfo.data?.label || nodeInfo.label || '未命名',
+        englishName: nodeInfo.data?.englishName || '',
+        description: nodeInfo.data?.description || '',
+        parameters: nodeInfo.data?.parameters || [],
+        features: nodeInfo.data?.features || [],
+        type: nodeInfo.type || 'custom',
+        category: nodeInfo.data?.category || ''
+      }
+
+      const prompt = ENTITY_OPTIMIZATION_PROMPT
+        .replace('{nodeInfo}', JSON.stringify(nodeData, null, 2))
+        .replace('{userInput}', userInput)
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: '请根据用户需求优化这个节点'
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000
+      })
+
+      const result = response.data.choices[0].message.content
+      console.log('本体优化返回结果:', result)
+
+      // 尝试解析JSON结果
+      try {
+        const optimizationResult = JSON.parse(result)
+        
+        if (!optimizationResult.success) {
+          return {
+            success: false,
+            message: optimizationResult.message || '优化失败',
+            originalNode: nodeInfo,
+            optimizedNode: null,
+            changes: []
+          }
+        }
+
+        const result = {
+          success: true,
+          message: optimizationResult.message || '节点优化成功',
+          originalNode: nodeInfo,
+          optimizedNode: optimizationResult.optimizedNode,
+          changes: optimizationResult.changes || []
+        }
+
+        // 验证响应格式并设置缓存
+        validateResponse(optimizationResult, ['success', 'optimizedNode'])
+        setCache(cacheKey, result)
+        
+        return result
+
+      } catch (parseError) {
+        console.error('本体优化JSON解析失败:', parseError)
+        // 尝试提取JSON部分
+        const jsonMatch = result.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          try {
+            const optimizationResult = JSON.parse(jsonMatch[0])
+            return {
+              success: optimizationResult.success || false,
+              message: optimizationResult.message || '节点优化完成',
+              originalNode: nodeInfo,
+              optimizedNode: optimizationResult.optimizedNode || null,
+              changes: optimizationResult.changes || []
+            }
+          } catch (secondParseError) {
+            console.error('二次JSON解析也失败:', secondParseError)
+          }
+        }
+        
+        return {
+          success: false,
+          message: 'AI返回格式错误，无法解析优化结果',
+          originalNode: nodeInfo,
+          optimizedNode: null,
+          changes: []
+        }
+      }
+    })
+  },
+
+  // 子图分析
+  async analyzeSubgraph(subgraphData) {
+    const cacheKey = generateCacheKey('analyzeSubgraph', { 
+      nodeCount: subgraphData.nodes.length,
+      edgeCount: subgraphData.edges.length,
+      nodeIds: subgraphData.nodes.map(n => n.id).sort()
+    })
+    
+    // 检查缓存
+    const cachedResult = getFromCache(cacheKey)
+    if (cachedResult) {
+      return cachedResult
+    }
+
+    return withRetry(async () => {
+      console.log('开始子图分析:', { 
+        nodes: subgraphData.nodes.length, 
+        edges: subgraphData.edges.length 
+      })
+
+      // 准备子图数据
+      const nodeData = subgraphData.nodes.map(node => ({
+        id: node.id,
+        label: node.data?.label || '未命名',
+        englishName: node.data?.englishName || '',
+        description: node.data?.description || '',
+        parameters: node.data?.parameters || [],
+        features: node.data?.features || [],
+        type: node.type || 'custom'
+      }))
+
+      const edgeData = subgraphData.edges.map(edge => ({
+        id: edge.id,
+        label: edge.label || '未命名关系',
+        source: edge.source,
+        target: edge.target,
+        englishName: edge.data?.englishName || '',
+        description: edge.data?.description || '',
+        type: edge.type || 'bezier'
+      }))
+
+      const prompt = SUBGRAPH_ANALYSIS_PROMPT
+        .replace('{nodes}', JSON.stringify(nodeData, null, 2))
+        .replace('{edges}', JSON.stringify(edgeData, null, 2))
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: '请对这个子图进行深度分析'
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 3000
+      })
+
+      const result = response.data.choices[0].message.content
+      console.log('子图分析返回结果:', result)
+
+      // 尝试解析JSON结果
+      try {
+        const analysisResult = JSON.parse(result)
+        
+        if (!analysisResult.success) {
+          return {
+            success: false,
+            message: analysisResult.message || '分析失败',
+            analysisResult: null
+          }
+        }
+
+        const finalResult = {
+          success: true,
+          message: '子图分析完成',
+          analysisResult: analysisResult
+        }
+
+        // 验证响应格式并设置缓存
+        validateResponse(analysisResult, ['success', 'overallScore', 'summary'])
+        setCache(cacheKey, finalResult)
+        
+        return finalResult
+
+      } catch (parseError) {
+        console.error('子图分析JSON解析失败:', parseError)
+        // 尝试提取JSON部分
+        const jsonMatch = result.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          try {
+            const analysisResult = JSON.parse(jsonMatch[0])
+            return {
+              success: analysisResult.success || false,
+              message: '子图分析完成',
+              analysisResult: analysisResult
+            }
+          } catch (secondParseError) {
+            console.error('二次JSON解析也失败:', secondParseError)
+          }
+        }
+        
+        return {
+          success: false,
+          message: 'AI返回格式错误，无法解析分析结果',
+          analysisResult: null
+        }
+      }
+    })
+  },
+
+  // 整体优化
+  async optimizeOverall(subgraphData, analysisResult, userInput = '') {
+    const cacheKey = generateCacheKey('optimizeOverall', { 
+      nodeCount: subgraphData.nodes.length,
+      edgeCount: subgraphData.edges.length,
+      userInput,
+      analysisId: analysisResult?.analysisId
+    })
+    
+    // 检查缓存
+    const cachedResult = getFromCache(cacheKey)
+    if (cachedResult) {
+      return cachedResult
+    }
+
+    return withRetry(async () => {
+      console.log('开始整体优化:', { 
+        nodes: subgraphData.nodes.length, 
+        edges: subgraphData.edges.length,
+        userInput 
+      })
+
+      // 准备子图数据
+      const nodeData = subgraphData.nodes.map(node => ({
+        id: node.id,
+        label: node.data?.label || '未命名',
+        englishName: node.data?.englishName || '',
+        description: node.data?.description || '',
+        parameters: node.data?.parameters || [],
+        features: node.data?.features || [],
+        type: node.type || 'custom',
+        position: node.position
+      }))
+
+      const edgeData = subgraphData.edges.map(edge => ({
+        id: edge.id,
+        label: edge.label || '未命名关系',
+        source: edge.source,
+        target: edge.target,
+        englishName: edge.data?.englishName || '',
+        description: edge.data?.description || '',
+        parameters: edge.data?.parameters || [],
+        features: edge.data?.features || [],
+        type: edge.type || 'bezier'
+      }))
+
+      const prompt = OVERALL_OPTIMIZATION_PROMPT
+        .replace('{nodes}', JSON.stringify(nodeData, null, 2))
+        .replace('{edges}', JSON.stringify(edgeData, null, 2))
+        .replace('{analysisResult}', JSON.stringify(analysisResult, null, 2))
+        .replace('{userInput}', userInput || '请根据分析结果进行整体优化')
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: '请对这个子图进行整体优化'
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 4000
+      })
+
+      const result = response.data.choices[0].message.content
+      console.log('整体优化返回结果:', result)
+
+      // 尝试解析JSON结果
+      try {
+        const optimizationResult = JSON.parse(result)
+        
+        if (!optimizationResult.success) {
+          return {
+            success: false,
+            message: optimizationResult.message || '优化失败',
+            originalSubgraph: subgraphData,
+            optimizedSubgraph: null,
+            changes: null,
+            statistics: null
+          }
+        }
+
+        const finalResult = {
+          success: true,
+          message: optimizationResult.message || '整体优化完成',
+          originalSubgraph: subgraphData,
+          optimizedSubgraph: optimizationResult.optimizedSubgraph,
+          changes: optimizationResult.changes,
+          statistics: optimizationResult.statistics
+        }
+
+        // 验证响应格式并设置缓存
+        validateResponse(optimizationResult, ['success', 'optimizedSubgraph'])
+        setCache(cacheKey, finalResult)
+        
+        return finalResult
+
+      } catch (parseError) {
+        console.error('整体优化JSON解析失败:', parseError)
+        // 尝试提取JSON部分
+        const jsonMatch = result.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          try {
+            const optimizationResult = JSON.parse(jsonMatch[0])
+            return {
+              success: optimizationResult.success || false,
+              message: optimizationResult.message || '整体优化完成',
+              originalSubgraph: subgraphData,
+              optimizedSubgraph: optimizationResult.optimizedSubgraph || null,
+              changes: optimizationResult.changes || null,
+              statistics: optimizationResult.statistics || null
+            }
+          } catch (secondParseError) {
+            console.error('二次JSON解析也失败:', secondParseError)
+          }
+        }
+        
+        return {
+          success: false,
+          message: 'AI返回格式错误，无法解析优化结果',
+          originalSubgraph: subgraphData,
+          optimizedSubgraph: null,
+          changes: null,
+          statistics: null
+        }
+      }
+    })
+  },
+
+  // 关系优化
+  async optimizeRelation(relationInfo, sourceNode, targetNode, userInput, subgraphContext = null) {
+    const cacheKey = generateCacheKey('optimizeRelation', { 
+      relationId: relationInfo.id, 
+      userInput,
+      sourceId: sourceNode.id,
+      targetId: targetNode.id
+    })
+    
+    // 检查缓存
+    const cachedResult = getFromCache(cacheKey)
+    if (cachedResult) {
+      return cachedResult
+    }
+
+    return withRetry(async () => {
+      console.log('开始关系优化:', { relationId: relationInfo.id, userInput })
+
+      // 准备关系信息
+      const relationData = {
+        id: relationInfo.id,
+        label: relationInfo.label || '未命名关系',
+        englishName: relationInfo.data?.englishName || '',
+        description: relationInfo.data?.description || '',
+        parameters: relationInfo.data?.parameters || [],
+        features: relationInfo.data?.features || [],
+        type: relationInfo.type || 'bezier',
+        direction: relationInfo.data?.direction || 'directed',
+        category: relationInfo.data?.category || ''
+      }
+
+      // 准备源节点和目标节点信息
+      const sourceNodeData = {
+        id: sourceNode.id,
+        label: sourceNode.data?.label || sourceNode.label || '未命名',
+        type: sourceNode.type || 'custom'
+      }
+
+      const targetNodeData = {
+        id: targetNode.id,
+        label: targetNode.data?.label || targetNode.label || '未命名',
+        type: targetNode.type || 'custom'
+      }
+
+      const prompt = RELATION_OPTIMIZATION_PROMPT
+        .replace('{relationInfo}', JSON.stringify(relationData, null, 2))
+        .replace('{sourceNode}', JSON.stringify(sourceNodeData, null, 2))
+        .replace('{targetNode}', JSON.stringify(targetNodeData, null, 2))
+        .replace('{userInput}', userInput)
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: '请根据用户需求优化这个关系'
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000
+      })
+
+      const result = response.data.choices[0].message.content
+      console.log('关系优化返回结果:', result)
+
+      // 尝试解析JSON结果
+      try {
+        const optimizationResult = JSON.parse(result)
+        
+        if (!optimizationResult.success) {
+          return {
+            success: false,
+            message: optimizationResult.message || '优化失败',
+            originalRelation: relationInfo,
+            optimizedRelation: null,
+            changes: []
+          }
+        }
+
+        const result = {
+          success: true,
+          message: optimizationResult.message || '关系优化成功',
+          originalRelation: relationInfo,
+          optimizedRelation: optimizationResult.optimizedRelation,
+          changes: optimizationResult.changes || []
+        }
+
+        // 验证响应格式并设置缓存
+        validateResponse(optimizationResult, ['success', 'optimizedRelation'])
+        setCache(cacheKey, result)
+        
+        return result
+
+      } catch (parseError) {
+        console.error('关系优化JSON解析失败:', parseError)
+        // 尝试提取JSON部分
+        const jsonMatch = result.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          try {
+            const optimizationResult = JSON.parse(jsonMatch[0])
+            return {
+              success: optimizationResult.success || false,
+              message: optimizationResult.message || '关系优化完成',
+              originalRelation: relationInfo,
+              optimizedRelation: optimizationResult.optimizedRelation || null,
+              changes: optimizationResult.changes || []
+            }
+          } catch (secondParseError) {
+            console.error('二次JSON解析也失败:', secondParseError)
+          }
+        }
+        
+        return {
+          success: false,
+          message: 'AI返回格式错误，无法解析优化结果',
+          originalRelation: relationInfo,
+          optimizedRelation: null,
+          changes: []
+        }
+      }
+    })
+  },
+
   // 文本识别
   async recognizeText(text) {
     try {

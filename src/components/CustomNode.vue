@@ -77,12 +77,36 @@ const isEditing = ref(false);
 const editValue = ref("");
 const editInput = ref(null);
 
-// 简化调试：只监听highlighted属性变化
+// 监听高亮属性变化
 watch(
   () => props.data.highlighted,
   (newVal) => {
     console.log(
       `CustomNode: 节点 ${props.data.label} (${props.id}) 高亮状态变化:`,
+      newVal
+    );
+  },
+  { immediate: true }
+);
+
+// 监听子图高亮属性变化
+watch(
+  () => props.data.subgraphHighlighted,
+  (newVal) => {
+    console.log(
+      `CustomNode: 节点 ${props.data.label} (${props.id}) 子图高亮状态变化:`,
+      newVal
+    );
+  },
+  { immediate: true }
+);
+
+// 监听淡化属性变化
+watch(
+  () => props.data.dimmed,
+  (newVal) => {
+    console.log(
+      `CustomNode: 节点 ${props.data.label} (${props.id}) 淡化状态变化:`,
       newVal
     );
   },

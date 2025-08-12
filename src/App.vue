@@ -37,9 +37,19 @@
 
         <!-- 第三步：正式图纸 -->
         <FinalCanvas
-          v-if="currentStep === 2"
+          v-if="currentStep === 2 && !showSubgraphEditor"
           v-model="finalData"
+          @enter-focus-edit="handleEnterFocusEdit"
           ref="finalCanvasRef"
+        />
+
+        <!-- 子图聚焦编辑页面 -->
+        <SubgraphFocusEditor
+          v-if="showSubgraphEditor"
+          :subgraph-data="subgraphEditData.subgraphData"
+          :original-data="subgraphEditData.originalData"
+          @return-to-main="handleReturnFromSubgraph"
+          @data-changed="handleSubgraphDataChanged"
         />
       </div>
 
@@ -117,6 +127,7 @@ import { ref, reactive, watch } from "vue";
 import TextRecognition from "./components/TextRecognition.vue";
 import SketchCanvas from "./components/SketchCanvas.vue";
 import FinalCanvas from "./components/FinalCanvas.vue";
+import SubgraphFocusEditor from "./components/SubgraphFocusEditor.vue";
 import { kimiAPI } from "./api/kimi.js";
 
 // 状态管理
@@ -126,6 +137,14 @@ const inputText = ref("");
 const mermaidCode = ref("");
 const sketchData = reactive({ nodes: [], edges: [] });
 const finalData = reactive({ nodes: [], edges: [] });
+
+// 子图编辑页面状态
+const showSubgraphEditor = ref(false);
+const subgraphEditData = reactive({
+  subgraphData: { nodes: [], edges: [] },
+  originalData: { nodes: [], edges: [] },
+  savedHighlightState: null
+});
 
 // 监听sketchData的变化
 watch(sketchData, (newValue) => {
@@ -468,6 +487,84 @@ ${sketchData.nodes.map(n => `- ${n.id}: ${n.data?.label || 'NO_LABEL'}`).join('\
 ${sketchData.edges.map(e => `- ${e.id}: ${e.label || 'NO_LABEL'} (${e.source} -> ${e.target})`).join('\n')}
 
 详细信息请查看控制台`)
+};
+
+// 处理进入子图聚焦编辑
+const handleEnterFocusEdit = (data) => {
+  console.log('进入子图聚焦编辑模式:', data);
+  
+  // 设置子图编辑数据
+  subgraphEditData.subgraphData = data.subgraphData;
+  subgraphEditData.originalData = data.originalData;
+  subgraphEditData.savedHighlightState = data.savedHighlightState; // 保存高亮状态
+  
+  // 显示子图编辑页面
+  showSubgraphEditor.value = true;
+  
+  console.log('子图编辑页面已激活:', {
+    subgraphNodes: data.subgraphData.nodes.length,
+    subgraphEdges: data.subgraphData.edges.length
+  });
+};
+
+// 处理从子图编辑返回
+const handleReturnFromSubgraph = () => {
+  console.log('从子图编辑返回到整体图纸');
+  
+  // 隐藏子图编辑页面
+  showSubgraphEditor.value = false;
+  
+  // 恢复高亮状态（如果有保存的状态）
+  if (subgraphEditData.savedHighlightState) {
+    // 通过ref调用FinalCanvas的恢复高亮方法
+    if (finalCanvasRef.value && finalCanvasRef.value.restoreHighlight) {
+      finalCanvasRef.value.restoreHighlight(subgraphEditData.savedHighlightState);
+    }
+  }
+  
+  // 清空子图编辑数据
+  subgraphEditData.subgraphData = { nodes: [], edges: [] };
+  subgraphEditData.originalData = { nodes: [], edges: [] };
+  subgraphEditData.savedHighlightState = null;
+  
+  console.log('已返回到整体图纸页面');
+};
+
+// 处理子图数据变更
+const handleSubgraphDataChanged = (modifiedData) => {
+  console.log('子图数据已修改:', modifiedData);
+  
+  // 这里应该实现数据融合逻辑，将修改后的子图数据合并到完整图表中
+  if (modifiedData && modifiedData.nodes && modifiedData.edges) {
+    // TODO: 实现数据融合算法
+    // 暂时直接更新finalData（后续任务中会完善这个逻辑）
+    console.log('应用子图修改到完整图表');
+    
+    // 简单的数据更新逻辑（后续会被更完善的融合算法替代）
+    const modifiedNodeIds = modifiedData.nodes.map(n => n.id);
+    const modifiedEdgeIds = modifiedData.edges.map(e => e.id);
+    
+    // 更新修改过的节点
+    finalData.nodes.forEach((node, index) => {
+      const modifiedNode = modifiedData.nodes.find(n => n.id === node.id);
+      if (modifiedNode) {
+        finalData.nodes[index] = { ...modifiedNode };
+      }
+    });
+    
+    // 更新修改过的边
+    finalData.edges.forEach((edge, index) => {
+      const modifiedEdge = modifiedData.edges.find(e => e.id === edge.id);
+      if (modifiedEdge) {
+        finalData.edges[index] = { ...modifiedEdge };
+      }
+    });
+    
+    console.log('子图修改已应用到完整图表');
+  }
+  
+  // 返回到整体图纸页面
+  handleReturnFromSubgraph();
 };
 </script>
 
