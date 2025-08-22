@@ -175,6 +175,25 @@ const handleSelectNode = (nodeId) => {
 
   // 触发响应式更新
   canvasData.value = { ...canvasData.value };
+
+  // 将选中的节点移动到视图中心
+  const selectedNode = canvasData.value.nodes.find(
+    (node) => node.id === nodeId
+  );
+  if (selectedNode && vueFlowCanvasRef.value) {
+    console.log("将节点移动到视图中心:", selectedNode.data?.label);
+    // 使用 fitView 方法聚焦到特定节点
+    setTimeout(() => {
+      if (vueFlowCanvasRef.value.fitView) {
+        vueFlowCanvasRef.value.fitView({
+          nodes: [selectedNode],
+          duration: 800,
+          padding: 0.3,
+        });
+      }
+    }, 100);
+  }
+
   console.log("=== 节点选择处理完成 ===");
 
   // 3秒后自动清除高亮

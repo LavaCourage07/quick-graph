@@ -4,7 +4,9 @@
     :class="{ 
       'highlighted': data.highlighted === true,
       'subgraph-highlighted': data.subgraphHighlighted === true,
-      'dimmed': data.dimmed === true
+      'dimmed': data.dimmed === true,
+      'newly-added-node': data.isNewlyAdded === true,
+      'modified-node': data.isModified === true && data.isNewlyAdded !== true
     }"
   >
     <!-- 四个连接桩 -->
@@ -68,7 +70,7 @@
           <rect x="4" y="4" width="8" height="8" rx="1" fill="white"/>
         </svg>
       </div>
-      <div class="node-title">{{ data.label }}{{ data.highlighted ? ' *' : '' }}</div>
+      <div class="node-title">{{ data.label || '未命名节点' }}{{ data.highlighted ? ' *' : '' }}</div>
     </div>
   </div>
 </template>
@@ -215,6 +217,23 @@ const props = defineProps({
   transition: all 0.3s ease;
 }
 
+/* 新增节点效果 - 深蓝色虚线边框 */
+.rect-node.newly-added-node,
+.vue-flow__node.rect-node.newly-added-node {
+  border: 3px dashed #0056b3 !important;
+  box-shadow: 0 0 20px rgba(0, 86, 179, 0.6) !important;
+  animation: pulse-deep-blue 2s ease-in-out infinite !important;
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%) !important;
+}
+
+/* 修改节点效果 - 淡蓝色实线边框 */
+.rect-node.modified-node {
+  border: 3px solid #64b5f6 !important;
+  box-shadow: 0 0 15px rgba(100, 181, 246, 0.5) !important;
+  animation: pulse-light-blue 2s ease-in-out infinite;
+  background: linear-gradient(135deg, #f3f9ff 0%, #e1f5fe 100%) !important;
+}
+
 @keyframes blue-highlight-pulse {
   0%, 100% {
     transform: scale(1);
@@ -238,6 +257,32 @@ const props = defineProps({
     transform: scale(1.05);
     box-shadow: 0 0 40px rgba(40, 167, 69, 0.9);
     border-color: #1e7e34;
+  }
+}
+
+@keyframes pulse-deep-blue {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 20px rgba(0, 86, 179, 0.6);
+    border-color: #0056b3;
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 30px rgba(0, 86, 179, 0.8);
+    border-color: #003d82;
+  }
+}
+
+@keyframes pulse-light-blue {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 15px rgba(100, 181, 246, 0.5);
+    border-color: #64b5f6;
+  }
+  50% {
+    transform: scale(1.01);
+    box-shadow: 0 0 20px rgba(100, 181, 246, 0.7);
+    border-color: #42a5f5;
   }
 }
 </style>

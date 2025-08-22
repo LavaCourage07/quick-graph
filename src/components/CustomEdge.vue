@@ -118,8 +118,32 @@ const computedEdgeStyle = computed(() => {
   // 检查多个可能的高亮状态位置
   const isSubgraphHighlighted = edge?.subgraphHighlighted || edge?.data?.subgraphHighlighted || props.subgraphHighlighted
   const isDimmed = edge?.dimmed || edge?.data?.dimmed || props.dimmed
+  const isNewlyAdded = edge?.data?.isNewlyAdded
+  const isModified = edge?.data?.isModified && !edge?.data?.isNewlyAdded
   
-  if (isSubgraphHighlighted) {
+  if (isNewlyAdded) {
+    // 新增关系样式 - 深蓝色虚线，更明显的效果
+    console.log(`Edge ${props.id} applying newly-added style`)
+    return {
+      ...baseStyle,
+      stroke: '#0056b3',
+      strokeWidth: 5,
+      strokeDasharray: '12 6',
+      opacity: 1,
+      filter: 'drop-shadow(0 0 10px rgba(0, 86, 179, 0.8))'
+    }
+  } else if (isModified) {
+    // 修改关系样式 - 淡蓝色实线
+    console.log(`Edge ${props.id} applying modified style`)
+    return {
+      ...baseStyle,
+      stroke: '#64b5f6',
+      strokeWidth: 3,
+      strokeDasharray: 'none',
+      opacity: 1,
+      filter: 'drop-shadow(0 0 6px rgba(100, 181, 246, 0.6))'
+    }
+  } else if (isSubgraphHighlighted) {
     // 子图高亮样式 - 更明显的绿色高亮效果
     console.log(`Edge ${props.id} applying subgraph highlight style`)
     return {

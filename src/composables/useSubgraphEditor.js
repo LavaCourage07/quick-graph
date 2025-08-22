@@ -36,6 +36,9 @@ export function useSubgraphEditor() {
   // 修改记录
   const modifications = reactive(new Map())
 
+  // 子图修改状态跟踪
+  const subgraphModificationStates = reactive(new Map())
+
   // 计算属性
   const hasModifications = computed(() => modifications.size > 0)
 
@@ -92,9 +95,14 @@ export function useSubgraphEditor() {
       centerNodeId
     })
 
-    // 深拷贝子图数据
-    subgraphData.nodes = deepClone(subgraph.nodes)
-    subgraphData.edges = deepClone(subgraph.edges)
+    // 深拷贝子图数据 - 使用splice确保响应式更新
+    const clonedNodes = deepClone(subgraph.nodes)
+    const clonedEdges = deepClone(subgraph.edges)
+    
+    // 清空现有数组并添加新元素，确保响应式更新
+    subgraphData.nodes.splice(0, subgraphData.nodes.length, ...clonedNodes)
+    subgraphData.edges.splice(0, subgraphData.edges.length, ...clonedEdges)
+    
     subgraphData.metadata = {
       originalSubgraphId: `subgraph_${Date.now()}`,
       centerNodeId: centerNodeId,
@@ -316,6 +324,154 @@ export function useSubgraphEditor() {
     editorState.showDifference = show
   }
 
+  // 撤回最后一次修改
+  const undoLastModification = () => {
+    const history = getModificationHistory()
+    const lastModification = history.find(mod => mod.status === 'accepted')
+
+    if (lastModification) {
+      console.log('撤回修改:', lastModification.id)
+
+      try {
+        const { type, changes } = lastModification
+
+        if (type === 'overall') {
+          // 撤回整体修改，恢复到修改前的状态
+          if (changes.before.nodes) {
+            subgraphData.nodes = deepClone(changes.before.nodes)
+          }
+          if (changes.before.edges) {
+            subgraphData.edges = deepClone(changes.before.edges)
+          }
+        } else if (type === 'entity') {
+          // 撤回节点修改
+          const nodeIndex = subgraphData.nodes.findIndex(n => n.id === lastModification.targetId)
+          if (nodeIndex !== -1 && changes.before) {
+            subgraphData.nodes[nodeIndex] = deepClone(changes.before)
+          }
+        } else if (type === 'relation') {
+          // 撤回边修改
+          const edgeIndex = subgraphData.edges.findIndex(e => e.id === lastModification.targetId)
+          if (edgeIndex !== -1 && changes.before) {
+            subgraphData.edges[edgeIndex] = deepClone(changes.before)
+          }
+        }
+
+        // 标记修改为已撤回
+        lastModification.status = 'undone'
+        subgraphData.metadata.lastModified = new Date()
+
+        console.log('修改撤回成功')
+        return true
+      } catch (error) {
+        console.error('撤回修改失败:', error)
+        return false
+      }
+    }
+
+    console.log('没有可撤回的修改')
+    return false
+  }
+
+  // 获取原始子图数据的快照
+  const createSnapshot = () => {
+    return {
+      nodes: deepClone(subgraphData.nodes),
+      edges: deepClone(subgraphData.edges),
+      timestamp: new Date()
+    }
+  }
+
+  // 恢复到快照状态
+  const restoreFromSnapshot = (snapshot) => {
+    if (snapshot && snapshot.nodes && snapshot.edges) {
+      subgraphData.nodes = deepClone(snapshot.nodes)
+      subgraphData.edges = deepClone(snapshot.edges)
+      subgraphData.metadata.lastModified = new Date()
+      console.log('已恢复到快照状态')
+      return true
+    }
+    return false
+  }
+
+  // 保存子图修改状态
+  const saveSubgraphModificationState = (subgraphId, modificationData) => {
+    subgraphModificationStates.set(subgraphId, {
+      hasModifications: true,
+      modificationData: modificationData,
+      timestamp: new Date()
+    })
+    console.log(`已保存子图 ${subgraphId} 的修改状态`)
+  }
+
+  // 获取子图修改状态
+  const getSubgraphModificationState = (subgraphId) => {
+    return subgraphModificationStates.get(subgraphId)
+  }
+
+  // 清除子图修改状态
+  const clearSubgraphModificationState = (subgraphId) => {
+    subgraphModificationStates.delete(subgraphId)
+    console.log(`已清除子图 ${subgraphId} 的修改状态`)
+  }
+
+  // 进入子图编辑时清除高亮
+  const enterSubgraphEditMode = () => {
+    console.log('进入子图编辑模式，清除所有高亮效果')
+
+    // 清除节点的高亮状态
+    subgraphData.nodes.forEach(node => {
+      // 清除样式类
+      if (node.class) {
+        node.class = node.class.replace(/\s*(modified-node|newly-added-node|highlight-temp|highlighted|subgraph-highlighted)/g, '')
+      }
+
+      // 清除数据属性中的高亮状态
+      if (node.data) {
+        node.data.highlighted = false
+        node.data.subgraphHighlighted = false
+        node.data.dimmed = false
+        node.data.isModified = false
+        node.data.isNewlyAdded = false
+      }
+    })
+
+    // 清除边的高亮状态
+    subgraphData.edges.forEach(edge => {
+      // 清除样式类
+      if (edge.class) {
+        edge.class = edge.class.replace(/\s*(modified-edge|newly-added-edge|highlight-temp|highlighted|subgraph-highlighted)/g, '')
+      }
+
+      // 清除边级别的高亮属性
+      edge.highlighted = false
+      edge.subgraphHighlighted = false
+      edge.dimmed = false
+
+      // 清除数据属性中的高亮状态
+      if (edge.data) {
+        edge.data.highlighted = false
+        edge.data.subgraphHighlighted = false
+        edge.data.dimmed = false
+        edge.data.isModified = false
+        edge.data.isNewlyAdded = false
+      }
+    })
+
+    console.log('已清除所有高亮效果，子图进入纯净编辑模式')
+  }
+
+  // 退出子图编辑时恢复高亮
+  const exitSubgraphEditMode = (subgraphId) => {
+    console.log('退出子图编辑模式，准备恢复高亮效果')
+    const modificationState = getSubgraphModificationState(subgraphId)
+    if (modificationState && modificationState.hasModifications) {
+      console.log(`子图 ${subgraphId} 有修改，将在返回整体图时恢复高亮`)
+      return modificationState.modificationData
+    }
+    return null
+  }
+
   return {
     // 状态
     editorState,
@@ -342,6 +498,14 @@ export function useSubgraphEditor() {
     resetEditor,
     setProcessing,
     setThinkingProcess,
-    showDifferenceComparison
+    showDifferenceComparison,
+    undoLastModification,
+    createSnapshot,
+    restoreFromSnapshot,
+    saveSubgraphModificationState,
+    getSubgraphModificationState,
+    clearSubgraphModificationState,
+    enterSubgraphEditMode,
+    exitSubgraphEditMode
   }
 }

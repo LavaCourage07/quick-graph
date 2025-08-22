@@ -191,7 +191,24 @@ defineExpose({
   setElements: (newElements) => {
     elements.value = newElements
   },
-  fitView,
+  fitView: (options = {}) => {
+    try {
+      // 如果传入了特定节点，则聚焦到这些节点
+      if (options.nodes && options.nodes.length > 0) {
+        const nodeIds = options.nodes.map(node => node.id)
+        fitView({ 
+          nodes: nodeIds,
+          duration: options.duration || 800, 
+          padding: options.padding || 0.3 
+        })
+      } else {
+        // 默认适应所有内容
+        fitView({ duration: 800, padding: 0.1 })
+      }
+    } catch (error) {
+      console.error("fitView失败:", error)
+    }
+  },
   vueFlowInstance,
 })
 </script>

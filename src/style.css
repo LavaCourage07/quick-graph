@@ -17,7 +17,7 @@ body {
 }
 
 .sidebar {
-  width: 300px;
+  width: 220px;
   background-color: #f8f9fa;
   border-right: 1px solid #e9ecef;
   padding: 20px;
@@ -168,7 +168,7 @@ body {
 }
 
 .panel-content {
-  padding: 15px;
+  /* padding: 15px; */
 }
 
 .node-item, .edge-item {

@@ -395,6 +395,25 @@ const SUBGRAPH_ANALYSIS_PROMPT = `你是一名工业知识建模专家，专门�
 
 请确保返回的是有效的JSON格式，不要包含任何其他文字。`
 
+// 语言交互优化提示词
+const LANGUAGE_OPTIMIZATION_PROMPT = `你是工业知识建模专家。根据用户需求修改子图。
+
+支持操作：增加/删除节点、增加/删除边、修改名称
+
+返回JSON格式：
+{
+  "success": true,
+  "message": "操作描述",
+  "optimizedSubgraph": {
+    "nodes": [{"id": "ID", "type": "rect", "position": {"x": 100, "y": 100}, "data": {"label": "名称"}}],
+    "edges": [{"id": "ID", "source": "源ID", "target": "目标ID", "type": "bezier", "label": "名称"}]
+  },
+  "changes": {"nodeChanges": [], "edgeChanges": []},
+  "statistics": {"nodesOptimized": 0, "edgesOptimized": 0, "newConnections": 0}
+}
+
+规则：保持原ID不变，新增需唯一ID，删除节点时删除相关边。`
+
 // 整体优化提示词
 const OVERALL_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专门负责对子图进行整体优化。
 
@@ -422,17 +441,24 @@ const OVERALL_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专�
    - 优化图的整体结构
    - 改进信息组织方式
    - 增强逻辑清晰度
+   - **必须新增至少1个与现有节点相连的新节点**，不能是孤立节点
 
 4. **专业性提升**：
    - 使用标准的工业术语
    - 添加英文对照
    - 完善技术参数
 
+**重要要求**：
+- **必须新增至少1个新节点**，该节点必须与子图中的现有节点有连接关系
+- 新增的节点应该是对当前子图功能的合理补充或扩展
+- 新增的连接关系应该符合业务逻辑和工程实际
+
 **优化原则**：
 - 保持原有结构的合理部分
 - 优先解决分析中发现的问题
 - 确保优化后的信息准确性
 - 提升整体的专业性和可读性
+- 新增元素必须与现有系统逻辑一致
 
 请返回优化后的完整子图数据，格式如下：
 {
@@ -1508,5 +1534,87 @@ export const kimiAPI = {
     }
 
     return { sourceHandle, targetHandle }
+  },
+
+  // 语言交互优化
+  async optimizeByLanguage(subgraphData, userInput) {
+    try {
+      console.log('开始语言交互优化:', { userInput, subgraphData })
+
+      // 清理子图数据，只保留必要字段
+      const cleanNodes = (subgraphData.nodes || []).map(node => ({
+        id: node.id,
+        type: node.type,
+        position: node.position,
+        data: {
+          label: node.data?.label || '',
+          englishName: node.data?.englishName || '',
+          description: node.data?.description || '',
+          parameters: node.data?.parameters || [],
+          features: node.data?.features || []
+        }
+      }))
+
+      const cleanEdges = (subgraphData.edges || []).map(edge => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: edge.type,
+        label: edge.label || edge.data?.label || '',
+        data: {
+          englishName: edge.data?.englishName || '',
+          description: edge.data?.description || '',
+          parameters: edge.data?.parameters || [],
+          features: edge.data?.features || []
+        }
+      }))
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: LANGUAGE_OPTIMIZATION_PROMPT
+          },
+          {
+            role: 'user',
+            content: `当前子图数据：\n节点：${JSON.stringify(cleanNodes, null, 2)}\n边：${JSON.stringify(cleanEdges, null, 2)}\n\n用户需求：${userInput}`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 4000
+      })
+
+      const content = response.data.choices[0].message.content
+      console.log('AI语言优化响应:', content)
+
+      // 尝试解析JSON响应
+      try {
+        const result = JSON.parse(content)
+        
+        if (result.success) {
+          console.log('语言优化成功:', result)
+          return result
+        } else {
+          console.error('语言优化失败:', result.message)
+          return {
+            success: false,
+            message: result.message || '语言优化失败'
+          }
+        }
+      } catch (parseError) {
+        console.error('解析AI响应失败:', parseError)
+        return {
+          success: false,
+          message: 'AI响应格式错误，无法解析结果'
+        }
+      }
+    } catch (error) {
+      console.error('语言交互优化API调用失败:', error)
+      return {
+        success: false,
+        message: 'API调用失败: ' + error.message
+      }
+    }
   }
 } 

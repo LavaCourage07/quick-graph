@@ -1,11 +1,11 @@
 <template>
   <div class="thinking-process" :class="{ active: isActive }">
     <!-- 思考过程头部 -->
-    <div class="thinking-header">
-      <div class="thinking-title">
+    <!-- <div class="thinking-header"> -->
+      <!-- <div class="thinking-title">
         <div class="brain-icon">🧠</div>
         <h4>AI深度思考中...</h4>
-      </div>
+      </div> -->
       <div class="thinking-progress">
         <div class="progress-circle">
           <svg class="progress-ring" width="40" height="40">
@@ -24,7 +24,7 @@
           <span class="progress-text">{{ Math.round(progress) }}%</span>
         </div>
       </div>
-    </div>
+    <!-- </div> -->
 
     <!-- 思考步骤列表 -->
     <div class="thinking-steps">

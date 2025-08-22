@@ -52,6 +52,7 @@
           :min-zoom="0.2"
           :max-zoom="4"
           class="subgraph-canvas"
+          @pane-ready="handlePaneReady"
         >
           <Background />
           <Controls />
@@ -91,6 +92,7 @@
             @start-analysis="handleStartAnalysis"
             @start-optimization="handleStartOverallOptimization"
             @optimization-complete="handleOverallOptimizationComplete"
+            @highlight-element="handleHighlightElement"
           />
         </div>
       </div>
@@ -99,7 +101,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { VueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -143,7 +145,16 @@ const {
   initializeEditor,
   switchMode: switchEditorMode,
   exportSubgraphData,
-  resetEditor
+  resetEditor,
+  recordModification,
+  applyModification,
+  deepClone,
+  restoreFromSnapshot,
+  saveSubgraphModificationState,
+  getSubgraphModificationState,
+  clearSubgraphModificationState,
+  enterSubgraphEditMode,
+  exitSubgraphEditMode
 } = useSubgraphEditor()
 
 // VueFlow元素数组
@@ -165,7 +176,96 @@ const panelTitle = computed(() => currentModeTitle.value)
 
 // 更新VueFlow元素数组
 const updateSubgraphElements = () => {
-  subgraphElements.value = [...subgraphData.nodes, ...subgraphData.edges]
+  console.log('🔄 开始更新VueFlow元素数组')
+  console.log('📊 原始数据:', {
+    nodeCount: subgraphData.nodes.length,
+    edgeCount: subgraphData.edges.length
+  })
+  
+  // 确保清除所有高亮状态后再更新元素
+  const cleanNodes = subgraphData.nodes.map(node => {
+    const cleanNode = {
+      ...node,
+      class: node.class ? node.class.replace(/\s*(highlighted|subgraph-highlighted|dimmed)/g, '') : '',
+      data: {
+        ...node.data,
+        highlighted: false,
+        subgraphHighlighted: false,
+        dimmed: false
+      }
+    }
+    
+    // 保留修改相关的样式类和数据
+    if (node.data?.isNewlyAdded) {
+      cleanNode.class = (cleanNode.class || '').replace(/\s*newly-added-node/g, '') + ' newly-added-node'
+      cleanNode.data.isNewlyAdded = true
+      cleanNode.data.isModified = true // 确保新增节点也标记为修改状态
+      console.log(`🔵 保留新增节点样式: ${node.id}, class: ${cleanNode.class}`)
+    } else if (node.data?.isModified) {
+      cleanNode.class = (cleanNode.class || '').replace(/\s*modified-node/g, '') + ' modified-node'
+      cleanNode.data.isModified = true
+      console.log(`✏️ 保留修改节点样式: ${node.id}, class: ${cleanNode.class}`)
+    }
+    
+    return cleanNode
+  })
+  
+  const cleanEdges = subgraphData.edges.map(edge => {
+    const cleanEdge = {
+      ...edge,
+      class: edge.class ? edge.class.replace(/\s*(highlighted|subgraph-highlighted|dimmed)/g, '') : '',
+      highlighted: false,
+      subgraphHighlighted: false,
+      dimmed: false,
+      data: {
+        ...edge.data,
+        highlighted: false,
+        subgraphHighlighted: false,
+        dimmed: false
+      }
+    }
+    
+    // 保留修改相关的样式类和数据
+    if (edge.data?.isNewlyAdded) {
+      cleanEdge.class = (cleanEdge.class || '').replace(/\s*newly-added-edge/g, '') + ' newly-added-edge'
+      cleanEdge.data.isNewlyAdded = true
+      cleanEdge.data.isModified = true // 确保新增关系也标记为修改状态
+      console.log(`🔗 保留新增关系样式: ${edge.id}, class: ${cleanEdge.class}`)
+    } else if (edge.data?.isModified) {
+      cleanEdge.class = (cleanEdge.class || '').replace(/\s*modified-edge/g, '') + ' modified-edge'
+      cleanEdge.data.isModified = true
+      console.log(`✏️ 保留修改关系样式: ${edge.id}, class: ${cleanEdge.class}`)
+    }
+    
+    return cleanEdge
+  })
+  
+  subgraphElements.value = [...cleanNodes, ...cleanEdges]
+  
+  console.log('🔄 VueFlow元素数组更新完成')
+  console.log('📊 最终元素统计:', {
+    totalElements: subgraphElements.value.length,
+    nodes: cleanNodes.length,
+    edges: cleanEdges.length,
+    newlyAddedNodes: cleanNodes.filter(n => n.data?.isNewlyAdded).length,
+    newlyAddedEdges: cleanEdges.filter(e => e.data?.isNewlyAdded).length,
+    modifiedNodes: cleanNodes.filter(n => n.data?.isModified && !n.data?.isNewlyAdded).length,
+    modifiedEdges: cleanEdges.filter(e => e.data?.isModified && !e.data?.isNewlyAdded).length
+  })
+  
+  // 打印所有元素的详细信息
+  subgraphElements.value.forEach(element => {
+    if (element.data?.isNewlyAdded || element.data?.isModified) {
+      console.log(`🎯 修改元素详情:`, {
+        id: element.id,
+        type: element.type || 'edge',
+        label: element.data?.label || element.label,
+        class: element.class,
+        isNewlyAdded: element.data?.isNewlyAdded,
+        isModified: element.data?.isModified
+      })
+    }
+  })
 }
 
 // 模式切换
@@ -173,18 +273,84 @@ const switchMode = (mode) => {
   switchEditorMode(mode)
 }
 
+// 处理VueFlow准备就绪
+const handlePaneReady = () => {
+  console.log('VueFlow画布准备就绪，最终清除高亮状态')
+  
+  // 最后一次强制清除高亮状态
+  setTimeout(() => {
+    subgraphElements.value.forEach(element => {
+      if (element.type !== 'edge') {
+        // 节点
+        if (element.data) {
+          element.data.highlighted = false
+          element.data.subgraphHighlighted = false
+          element.data.dimmed = false
+        }
+      } else {
+        // 边
+        element.highlighted = false
+        element.subgraphHighlighted = false
+        element.dimmed = false
+        if (element.data) {
+          element.data.highlighted = false
+          element.data.subgraphHighlighted = false
+          element.data.dimmed = false
+        }
+      }
+    })
+    console.log('VueFlow画布高亮状态已最终清除')
+  }, 100)
+}
+
 // 返回主画布
 const returnToMain = () => {
-  console.log('返回主画布')
+  console.log('=== 返回主画布开始 ===')
+  
+  // 检查是否有修改
+  const hasAnyModifications = hasModifications.value || 
+    subgraphData.nodes.some(n => n.data?.isModified) || 
+    subgraphData.edges.some(e => e.data?.isModified)
+  
+  console.log('修改状态检查:', {
+    hasModifications: hasModifications.value,
+    modifiedNodes: subgraphData.nodes.filter(n => n.data?.isModified).map(n => ({ id: n.id, label: n.data?.label })),
+    modifiedEdges: subgraphData.edges.filter(e => e.data?.isModified).map(e => ({ id: e.id, label: e.data?.label })),
+    newlyAddedNodes: subgraphData.nodes.filter(n => n.data?.isNewlyAdded).map(n => ({ id: n.id, label: n.data?.label })),
+    newlyAddedEdges: subgraphData.edges.filter(e => e.data?.isNewlyAdded).map(e => ({ id: e.id, label: e.data?.label }))
+  })
+  
+  // 如果有修改，保存修改状态
+  if (hasAnyModifications) {
+    const subgraphId = subgraphData.metadata.originalSubgraphId || 'current-subgraph'
+    const modificationData = {
+      modifiedNodes: subgraphData.nodes.filter(n => n.data?.isModified).map(n => n.id),
+      modifiedEdges: subgraphData.edges.filter(e => e.data?.isModified).map(e => e.id),
+      newNodes: subgraphData.nodes.filter(n => n.data?.isNewlyAdded).map(n => n.id),
+      newEdges: subgraphData.edges.filter(e => e.data?.isNewlyAdded).map(e => e.id)
+    }
+    saveSubgraphModificationState(subgraphId, modificationData)
+    console.log('已保存修改状态:', modificationData)
+  }
+  
   // 导出修改后的数据
   const modifiedData = exportSubgraphData()
+  console.log('导出的修改数据:', {
+    nodes: modifiedData.nodes.length,
+    edges: modifiedData.edges.length,
+    nodeDetails: modifiedData.nodes.map(n => ({ id: n.id, label: n.data?.label, type: n.type })),
+    edgeDetails: modifiedData.edges.map(e => ({ id: e.id, label: e.data?.label, source: e.source, target: e.target }))
+  })
   
   // 发送修改后的数据给父组件
   emit('data-changed', {
     nodes: modifiedData.nodes,
-    edges: modifiedData.edges
+    edges: modifiedData.edges,
+    hasModifications: hasAnyModifications
   })
   emit('return-to-main')
+  
+  console.log('=== 返回主画布完成 ===')
   
   // 重置编辑器状态
   resetEditor()
@@ -199,7 +365,34 @@ watch(() => [props.subgraphData, props.originalData], () => {
       props.originalData,
       props.subgraphData.centerNodeId || ''
     )
-    updateSubgraphElements()
+    
+    // 进入子图编辑模式，清除高亮效果
+    enterSubgraphEditMode()
+    
+    // 强制清除所有高亮状态
+    nextTick(() => {
+      console.log('强制清除子图中的所有高亮状态')
+      subgraphData.nodes.forEach(node => {
+        if (node.data) {
+          node.data.highlighted = false
+          node.data.subgraphHighlighted = false
+          node.data.dimmed = false
+        }
+      })
+      
+      subgraphData.edges.forEach(edge => {
+        edge.highlighted = false
+        edge.subgraphHighlighted = false
+        edge.dimmed = false
+        if (edge.data) {
+          edge.data.highlighted = false
+          edge.data.subgraphHighlighted = false
+          edge.data.dimmed = false
+        }
+      })
+      
+      updateSubgraphElements()
+    })
   }
 }, { immediate: true, deep: true })
 
@@ -232,103 +425,325 @@ const handleStartAnalysis = (analysisData) => {
 // 处理开始整体优化
 const handleStartOverallOptimization = (optimizationData) => {
   console.log('开始整体优化:', optimizationData)
-  // 这里可以添加整体优化开始的处理逻辑
+  
+  // 如果需要立即应用优化结果
+  if (optimizationData.applyImmediately && optimizationData.optimizationResult?.optimizedSubgraph) {
+    console.log('立即应用AI优化结果到子图（暂存状态）')
+    
+    // 直接应用优化结果到子图数据中
+    applyOverallOptimization(
+      optimizationData.optimizationResult.optimizedSubgraph, 
+      optimizationData.optimizationResult.changes
+    )
+    
+    // 高亮修改的元素
+    if (optimizationData.modificationDiff) {
+      highlightModifiedElements(optimizationData.modificationDiff)
+    }
+    
+    console.log('AI优化结果已应用到子图，等待用户确认')
+  }
+}
+
+// 高亮修改的元素
+const highlightModifiedElements = (modificationDiff) => {
+  console.log('🎨 开始高亮修改的元素')
+  console.log('📋 修改差异列表:', modificationDiff)
+  console.log('🔍 当前subgraphElements数量:', subgraphElements.value.length)
+  
+  // 清除之前的高亮
+  clearElementHighlights()
+  
+  // 为每个修改的元素添加高亮样式
+  modificationDiff.forEach((diff, index) => {
+    console.log(`🎯 处理第${index + 1}个差异:`, {
+      type: diff.type,
+      action: diff.action,
+      elementId: diff.elementId,
+      elementName: diff.elementName
+    })
+    
+    const element = subgraphElements.value.find(el => el.id === diff.elementId)
+    if (element) {
+      console.log(`✅ 找到元素 ${diff.elementId}:`, {
+        currentClass: element.class,
+        currentData: element.data
+      })
+      
+      // 添加修改标记，仅对"modified"标记为修改；"added"只标记新增
+      element.data = element.data || {}
+      if (diff.action === 'modified') {
+        element.data.isModified = true
+      }
+      element.data.modificationType = diff.action
+      
+      // 根据操作类型添加不同的样式类
+      if (diff.action === 'added') {
+        // 新增元素 - 蓝色虚线
+        if (diff.type === 'node') {
+          element.class = (element.class || '') + ' newly-added-node'
+          // 确保内部节点组件也能识别为新增（用于应用深蓝色虚线样式与名称显示）
+          element.data.isNewlyAdded = true
+          element.data.isModified = true
+          console.log(`🔵 为新增节点 ${diff.elementId} 添加样式类: newly-added-node`)
+        } else if (diff.type === 'edge') {
+          element.class = (element.class || '') + ' newly-added-edge'
+          // 确保边的样式计算能识别新增
+          if (!element.data) element.data = {}
+          element.data.isNewlyAdded = true
+          element.data.isModified = true
+          console.log(`🔗 为新增关系 ${diff.elementId} 添加样式类: newly-added-edge`)
+        }
+      } else if (diff.action === 'modified') {
+        // 修改元素 - 蓝色竖线
+        if (diff.type === 'node') {
+          element.class = (element.class || '') + ' modified-node'
+          console.log(`✏️ 为修改节点 ${diff.elementId} 添加样式类: modified-node`)
+        } else if (diff.type === 'edge') {
+          element.class = (element.class || '') + ' modified-edge'
+          console.log(`✏️ 为修改关系 ${diff.elementId} 添加样式类: modified-edge`)
+        }
+      }
+      
+      console.log(`🎨 元素 ${diff.elementId} 样式更新后:`, {
+        class: element.class,
+        isModified: element.data.isModified,
+        modificationType: element.data.modificationType
+      })
+    } else {
+      console.error(`❌ 未找到元素 ${diff.elementId} 在 subgraphElements 中`)
+      console.log('🔍 当前所有元素ID:', subgraphElements.value.map(el => el.id))
+    }
+  })
+  
+  console.log('🎨 高亮处理完成')
+}
+
+// 清除元素高亮
+const clearElementHighlights = () => {
+  subgraphElements.value.forEach(element => {
+    if (element.data?.isModified) {
+      element.data.isModified = false
+      element.data.modificationType = null
+    }
+    if (element.class) {
+      element.class = element.class.replace(/\s*(modified-(node|edge)|newly-added-(node|edge))/g, '')
+    }
+  })
+}
+
+// 处理高亮单个元素
+const handleHighlightElement = (elementId) => {
+  console.log('高亮元素:', elementId)
+  
+  // 清除之前的临时高亮
+  subgraphElements.value.forEach(element => {
+    if (element.class) {
+      element.class = element.class.replace(/\s*highlight-temp/g, '')
+    }
+  })
+  
+  // 高亮指定元素
+  const element = subgraphElements.value.find(el => el.id === elementId)
+  if (element) {
+    element.class = (element.class || '') + ' highlight-temp'
+    
+    // 3秒后移除临时高亮
+    setTimeout(() => {
+      if (element.class) {
+        element.class = element.class.replace(/\s*highlight-temp/g, '')
+      }
+    }, 3000)
+  }
 }
 
 // 处理整体优化完成
 const handleOverallOptimizationComplete = (result) => {
-  console.log('整体优化完成:', result)
+  console.log('优化完成:', result)
   
   if (result.action === 'accept') {
-    // 用户接受了优化结果
-    console.log('用户接受了整体优化结果')
+    // 用户采纳了优化结果 - 固化修改
+    console.log(`用户采纳了${result.type}优化结果，固化修改`)
     
-    // 应用优化结果到子图数据中
-    if (result.result?.optimizedSubgraph) {
-      applyOverallOptimization(result.result.optimizedSubgraph, result.result.changes)
+    // 根据优化类型记录修改
+    const optimizationType = result.type || 'overall'
+    const optimizationName = optimizationType === 'language' ? '语言交互优化' : '整体智能优化'
+    
+    // 记录这次优化修改为已接受状态
+    const modificationId = recordModification(
+      optimizationType,
+      'subgraph',
+      optimizationName,
+      result.result,
+      {
+        before: result.preOptimizationSnapshot || {
+          nodes: deepClone(subgraphData.nodes),
+          edges: deepClone(subgraphData.edges)
+        },
+        after: {
+          nodes: deepClone(subgraphData.nodes),
+          edges: deepClone(subgraphData.edges)
+        }
+      }
+    )
+    
+    // 应用修改记录（固化修改）
+    applyModification(modificationId)
+    
+    // 清除高亮
+    clearElementHighlights()
+    
+    // 关闭优化面板
+    switchMode('none')
+    
+    console.log(`${optimizationName}结果已固化，面板已关闭`)
+    
+    // 如果是语言优化，自动触发数据传递
+    if (optimizationType === 'language') {
+      console.log('语言优化完成，自动触发数据传递')
+      // 延迟一下确保状态更新完成
+      setTimeout(() => {
+        handleReturnToMain()
+      }, 100)
+    }
+  } else if (result.action === 'reject') {
+    // 用户放弃了优化结果 - 撤回暂存修改
+    console.log(`用户放弃了${result.type}优化结果，撤回暂存修改`)
+    
+    if (result.preOptimizationSnapshot) {
+      // 恢复到优化前的快照
+      restoreFromSnapshot(result.preOptimizationSnapshot)
+      console.log('已恢复到优化前的子图状态')
+    } else {
+      console.log('没有优化前快照，保持当前状态')
     }
     
-    // 触发数据变更事件
-    emit('data-changed', {
-      type: 'overall-optimization',
-      result: result,
-      nodes: subgraphData.nodes,
-      edges: subgraphData.edges,
-      modifications: exportSubgraphData().modifications,
-      hasModifications: hasModifications.value
-    })
-  } else if (result.action === 'reject') {
-    // 用户拒绝了优化结果
-    console.log('用户拒绝了整体优化结果')
+    // 清除高亮
+    clearElementHighlights()
+    
+    // 关闭优化面板
+    switchMode('none')
+    
+    console.log('暂存修改已撤回，面板已关闭')
   }
 }
 
 // 应用整体优化结果
 const applyOverallOptimization = (optimizedSubgraph, changes) => {
-  console.log('应用整体优化结果:', { optimizedSubgraph, changes })
+  console.log('🚀 开始应用整体优化结果')
+  console.log('📊 优化数据:', { 
+    nodeCount: optimizedSubgraph.nodes?.length || 0,
+    edgeCount: optimizedSubgraph.edges?.length || 0,
+    changes 
+  })
   
   try {
-    // 更新节点数据
+    // 更新和添加节点数据
     if (optimizedSubgraph.nodes) {
-      optimizedSubgraph.nodes.forEach(optimizedNode => {
+      console.log(`📝 处理 ${optimizedSubgraph.nodes.length} 个节点`)
+      
+      optimizedSubgraph.nodes.forEach((optimizedNode, index) => {
         const nodeIndex = subgraphData.nodes.findIndex(n => n.id === optimizedNode.id)
         if (nodeIndex !== -1) {
-          // 保留原有的位置和类型信息，更新其他数据
+          // 更新现有节点
           const originalNode = subgraphData.nodes[nodeIndex]
-          subgraphData.nodes[nodeIndex] = {
+          const updatedNode = {
             ...originalNode,
+            label: (optimizedNode.data && optimizedNode.data.label)
+              ? optimizedNode.data.label
+              : (optimizedNode.label || originalNode.label),
             data: {
               ...originalNode.data,
-              label: optimizedNode.label || originalNode.data?.label,
-              englishName: optimizedNode.englishName || originalNode.data?.englishName,
-              description: optimizedNode.description || originalNode.data?.description,
-              parameters: optimizedNode.parameters || originalNode.data?.parameters || [],
-              features: optimizedNode.features || originalNode.data?.features || [],
-              category: optimizedNode.category || originalNode.data?.category,
-              isModified: true // 标记为已修改
+              englishName: optimizedNode.data?.englishName || optimizedNode.englishName || originalNode.data?.englishName,
+              description: optimizedNode.data?.description || optimizedNode.description || originalNode.data?.description,
+              properties: optimizedNode.data?.properties || optimizedNode.properties || originalNode.data?.properties || [],
+              features: optimizedNode.data?.features || optimizedNode.features || originalNode.data?.features || []
             }
           }
+          // 使用splice确保响应式更新
+          subgraphData.nodes.splice(nodeIndex, 1, updatedNode)
+          console.log(`✏️ 节点 ${optimizedNode.id} 已更新`)
+        } else {
+          // 添加新节点
+          console.log(`➕ 添加新节点:`, {
+            id: optimizedNode.id,
+            label: optimizedNode.data?.label,
+            type: optimizedNode.type,
+            isNewlyAdded: optimizedNode.data?.isNewlyAdded
+          })
+          // 补全新增节点的必要字段与高亮标记
+          const filledNode = {
+            ...optimizedNode,
+            type: optimizedNode.type || 'rect',
+            data: {
+              ...(optimizedNode.data || {}),
+              // 名称优先使用 AI 返回的 data.label，其次顶层 label，最后回退为 id
+              label: (optimizedNode.data && optimizedNode.data.label)
+                ? optimizedNode.data.label
+                : (optimizedNode.label || optimizedNode.id || 'AI新增节点'),
+              isNewlyAdded: true,
+              isModified: true
+            },
+            class: ((optimizedNode.class || '') + ' newly-added-node').trim()
+          }
+          subgraphData.nodes.push(filledNode)
         }
       })
+      
+      console.log(`📝 节点处理完成，当前节点总数: ${subgraphData.nodes.length}`)
     }
     
-    // 更新边数据
+    // 更新和添加边数据
     if (optimizedSubgraph.edges) {
-      optimizedSubgraph.edges.forEach(optimizedEdge => {
+      console.log(`🔗 处理 ${optimizedSubgraph.edges.length} 个关系`)
+      
+      optimizedSubgraph.edges.forEach((optimizedEdge, index) => {
         const edgeIndex = subgraphData.edges.findIndex(e => e.id === optimizedEdge.id)
         if (edgeIndex !== -1) {
           // 更新现有边
           const originalEdge = subgraphData.edges[edgeIndex]
-          subgraphData.edges[edgeIndex] = {
+          const updatedEdge = {
             ...originalEdge,
-            label: optimizedEdge.label || originalEdge.label,
+            label: optimizedEdge.label || originalEdge.label || optimizedEdge.data?.label,
             data: {
               ...originalEdge.data,
-              englishName: optimizedEdge.englishName || originalEdge.data?.englishName,
-              description: optimizedEdge.description || originalEdge.data?.description,
-              parameters: optimizedEdge.parameters || originalEdge.data?.parameters || [],
-              features: optimizedEdge.features || originalEdge.data?.features || [],
-              isModified: true // 标记为已修改
+              englishName: optimizedEdge.data?.englishName || optimizedEdge.englishName || originalEdge.data?.englishName,
+              description: optimizedEdge.data?.description || optimizedEdge.description || originalEdge.data?.description,
+              parameters: optimizedEdge.data?.parameters || optimizedEdge.parameters || originalEdge.data?.parameters || [],
+              features: optimizedEdge.data?.features || optimizedEdge.features || originalEdge.data?.features || []
             }
           }
-        } else if (optimizedEdge.id.startsWith('new_')) {
-          // 添加新边（如果AI建议了新的连接）
-          subgraphData.edges.push({
+          // 使用splice确保响应式更新
+          subgraphData.edges.splice(edgeIndex, 1, updatedEdge)
+          console.log(`✏️ 关系 ${optimizedEdge.id} 已更新`)
+        } else {
+          // 添加新边
+          console.log(`➕ 添加新关系:`, {
             id: optimizedEdge.id,
             source: optimizedEdge.source,
             target: optimizedEdge.target,
-            label: optimizedEdge.label || '新关系',
-            type: optimizedEdge.type || 'bezier',
-            data: {
-              englishName: optimizedEdge.englishName || '',
-              description: optimizedEdge.description || '',
-              parameters: optimizedEdge.parameters || [],
-              features: optimizedEdge.features || [],
-              isModified: true
-            }
+            label: optimizedEdge.label,
+            type: optimizedEdge.type,
+            isNewlyAdded: optimizedEdge.data?.isNewlyAdded
           })
+          // 补全新增边的必要字段与高亮标记
+          const filledEdge = {
+            ...optimizedEdge,
+            type: optimizedEdge.type || 'bezier',
+            // 边名称优先使用顶层 label，其次 data.label
+            label: optimizedEdge.label || optimizedEdge.data?.label || 'AI新增关系',
+            data: {
+              ...(optimizedEdge.data || {}),
+              isNewlyAdded: true,
+              isModified: true
+            },
+            class: ((optimizedEdge.class || '') + ' newly-added-edge').trim()
+          }
+          subgraphData.edges.push(filledEdge)
         }
       })
+      
+      console.log(`🔗 关系处理完成，当前关系总数: ${subgraphData.edges.length}`)
     }
     
     console.log('整体优化结果应用完成')
@@ -473,6 +888,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 10;
 }
 
 .panel-header {
@@ -490,8 +907,10 @@ defineExpose({
 
 .panel-content {
   flex: 1;
-  padding: 20px;
+  /* padding: 20px; */
   overflow-y: auto;
+  /* 确保面板内容不会被底部元素遮挡 */
+  padding-bottom: 40px;
 }
 
 .placeholder-content {
@@ -503,5 +922,35 @@ defineExpose({
 .placeholder-content p {
   margin: 10px 0;
   font-size: 14px;
+}
+
+/* 修改高亮样式 - 现在由CustomNode和CustomEdge组件处理 */
+
+/* 临时高亮 */
+:deep(.vue-flow__node.highlight-temp) {
+  border: 3px solid #ffc107 !important;
+  box-shadow: 0 0 20px rgba(255, 193, 7, 0.6) !important;
+  animation: highlight-flash 0.5s ease-in-out 3;
+}
+
+:deep(.vue-flow__edge.highlight-temp .vue-flow__edge-path) {
+  stroke: #ffc107 !important;
+  stroke-width: 4px !important;
+  filter: drop-shadow(0 0 8px rgba(255, 193, 7, 0.8));
+  animation: highlight-flash 0.5s ease-in-out 3;
+}
+
+/* 动画现在由CustomNode和CustomEdge组件处理 */
+
+@keyframes highlight-flash {
+  0% {
+    box-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(255, 193, 7, 1);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+  }
 }
 </style>
