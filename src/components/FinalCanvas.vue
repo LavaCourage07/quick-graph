@@ -53,14 +53,24 @@
       @enhance-edge="enhanceEdge"
       @close="hidePanel"
     />
+
+    <!-- 智能搜索组件 -->
+    <SmartSearch
+      :is-loading="smartSearchIsLoading"
+      :results="smartSearchResults"
+      @search="handleSmartSearch"
+      @select-alternative="handleSelectAlternative"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, watch, computed } from "vue";
+import SmartSearch from "./SmartSearch.vue";
 import CanvasHeader from "./CanvasHeader.vue";
 import VueFlowCanvas from "./VueFlowCanvas.vue";
 import InfoPanel from "./InfoPanel.vue";
+import { kimiAPI } from "../api/kimi.js";
 import { useCanvasSearch } from "../composables/useCanvasSearch.js";
 import { useCanvasOperations } from "../composables/useCanvasOperations.js";
 
@@ -267,6 +277,20 @@ const handleSelectNodeForSubgraph = (nodeId) => {
   // 确保子图状态正确更新
   subgraphSearchState.isActive = true;
   subgraphSearchState.selectedNode = nodeId;
+
+  // 将视图聚焦到子图区域
+  const subgraphNodes = canvasData.value.nodes.filter(node => subgraph.nodes.includes(node.id));
+  if (subgraphNodes.length > 0 && vueFlowCanvasRef.value) {
+    setTimeout(() => {
+      if (vueFlowCanvasRef.value.fitView) {
+        vueFlowCanvasRef.value.fitView({
+          nodes: subgraphNodes,
+          duration: 800,
+          padding: 0.2,
+        });
+      }
+    }, 100);
+  }
 
   console.log("=== 子图选择处理完成 ===");
   console.log("子图状态:", subgraphSearchState.isActive);
@@ -519,6 +543,76 @@ const customRestoreHighlight = (savedState) => {
   } else {
     console.log("没有有效的保存状态或状态不活跃");
   }
+};
+
+// 智能搜索状态
+const smartSearchIsLoading = ref(false);
+const smartSearchResults = ref([]);
+const lastSmartSearchIntent = ref('find_node'); // 保存上次的意图
+
+// 处理智能搜索
+const handleSmartSearch = async (query) => {
+  console.log("智能搜索查询:", query);
+  smartSearchIsLoading.value = true;
+  smartSearchResults.value = [];
+
+  try {
+    const nodeLabels = canvasData.value.nodes.map(n => n.data?.label || n.id);
+    const result = await kimiAPI.parseSearchIntent(query, nodeLabels);
+
+    if (!result.success) {
+      throw new Error(result.message || '无法解析您的查询');
+    }
+
+    const { intent, keyword } = result;
+    lastSmartSearchIntent.value = intent; // 保存意图
+
+    console.log(`意图: ${intent}, 关键词: ${keyword}`);
+
+    // 查找所有匹配的节点
+    const matchingNodes = canvasData.value.nodes.filter(node =>
+      (node.data?.label || node.id).toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (matchingNodes.length === 0) {
+      alert(`在图中没有找到与“${keyword}”相关的节点。`);
+      return;
+    }
+
+    // 如果有多个匹配项，将它们全部显示在备选列表中
+    if (matchingNodes.length > 1) {
+      smartSearchResults.value = matchingNodes;
+    }
+
+    // 默认操作第一个匹配到的节点
+    const primaryNode = matchingNodes[0];
+
+    if (intent === 'find_node') {
+      handleSelectNode(primaryNode.id);
+    } else if (intent === 'find_subgraph') {
+      handleSelectNodeForSubgraph(primaryNode.id);
+    }
+
+  } catch (error) {
+    console.error("智能搜索失败:", error);
+    alert(`搜索失败：${error.message}`);
+  } finally {
+    smartSearchIsLoading.value = false;
+  }
+};
+
+// 处理选择备选节点
+const handleSelectAlternative = (node) => {
+  console.log(`选择了备选节点: ${node.id}, 意图: ${lastSmartSearchIntent.value}`);
+
+  // 根据上次保存的意图执行操作
+  if (lastSmartSearchIntent.value === 'find_node') {
+    handleSelectNode(node.id);
+  } else if (lastSmartSearchIntent.value === 'find_subgraph') {
+    handleSelectNodeForSubgraph(node.id);
+  }
+
+  smartSearchResults.value = []; // 清空备选列表
 };
 
 // 暴露方法

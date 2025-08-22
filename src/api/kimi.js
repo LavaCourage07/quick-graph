@@ -414,6 +414,41 @@ const LANGUAGE_OPTIMIZATION_PROMPT = `你是工业知识建模专家。根据用
 
 规则：保持原ID不变，新增需唯一ID，删除节点时删除相关边。`
 
+// 搜索意图分析提示词
+const SEARCH_INTENT_PROMPT = `你是一个图表搜索助手。你的任务是分析用户的自然语言查询，并判断其意图。
+
+当前图表中可用的节点标签：
+{nodeLabels}
+
+用户查询："{query}"
+
+请根据用户的查询和可用的节点标签，分析出用户的意图和关键词。意图只能是以下两种之一：
+1. 'find_node'：用户想要查找并高亮单个节点。
+2. 'find_subgraph'：用户想要查找与某个节点相关的子图（即与该节点直接相连的所有节点和边）。
+
+关键词应该是从用户查询中提取的最核心的实体名称，并且该名称必须存在于上面的“可用节点标签”列表中。如果查询中的实体不在列表中，请选择最相似的一个。
+
+请返回一个JSON对象，格式如下：
+{
+  "intent": "find_node | find_subgraph",
+  "keyword": "提取出的关键词"
+}
+
+例如：
+如果用户查询是“查找锅炉”，你应该返回：
+{
+  "intent": "find_node",
+  "keyword": "锅炉"
+}
+
+如果用户查询是“看看换热器和它连接的设备”，你应该返回：
+{
+  "intent": "find_subgraph",
+  "keyword": "换热器"
+}
+
+请确保只返回有效的JSON格式，不要包含任何其他文字。`;
+
 // 整体优化提示词
 const OVERALL_OPTIMIZATION_PROMPT = `你是一名工业知识建模专家，专门负责对子图进行整体优化。
 
@@ -1616,5 +1651,62 @@ export const kimiAPI = {
         message: 'API调用失败: ' + error.message
       }
     }
+  },
+
+  // 解析搜索意图
+  async parseSearchIntent(query, nodeLabels) {
+    const cacheKey = generateCacheKey('parseSearchIntent', { query, nodeLabels });
+    const cachedResult = getFromCache(cacheKey);
+    if (cachedResult) {
+      return cachedResult;
+    }
+
+    return withRetry(async () => {
+      console.log('开始解析搜索意图:', { query });
+
+      const prompt = SEARCH_INTENT_PROMPT
+        .replace('{nodeLabels}', JSON.stringify(nodeLabels))
+        .replace('{query}', query);
+
+      const response = await kimiClient.post('', {
+        model: 'moonshot-v1-8k',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: `分析这个查询："${query}"`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 200
+      });
+
+      const content = response.data.choices[0].message.content;
+      console.log('搜索意图解析结果:', content);
+
+      try {
+        const result = JSON.parse(content);
+        validateResponse(result, ['intent', 'keyword']);
+        const finalResult = { success: true, ...result };
+        setCache(cacheKey, finalResult);
+        return finalResult;
+      } catch (error) {
+        console.error('搜索意图JSON解析失败:', error);
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const result = JSON.parse(jsonMatch[0]);
+            validateResponse(result, ['intent', 'keyword']);
+            const finalResult = { success: true, ...result };
+            setCache(cacheKey, finalResult);
+            return finalResult;
+          } catch (e) { /* ignore */ }
+        }
+        return { success: false, message: '无法解析AI的意图分析结果' };
+      }
+    });
   }
-} 
+}
